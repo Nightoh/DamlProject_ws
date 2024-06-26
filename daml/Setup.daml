@@ -1,0 +1,55 @@
+module Setup where
+
+import Main
+import Daml.Script
+
+data TestParties = TestParties with
+    store: Party
+    customer: Party
+    westDrone: Party
+    eastDrone: Party
+
+setupTestParties = script do
+    -- 1. Allocate parties with the given display name
+    store <- allocatePartyWithHint "BurgerHouse" (PartyIdHint "SB")
+    customer <- allocatePartyWithHint "Ada" (PartyIdHint "ADA")
+    westDrone <- allocatePartyWithHint "WestDrone" (PartyIdHint "WD")
+    eastDrone <- allocatePartyWithHint "EastDrone" (PartyIdHint "ED")
+
+    return TestParties with
+        store
+        customer
+        westDrone
+        eastDrone
+
+setupUsers = script do
+    (testParties@TestParties{..}) <- setupTestParties
+
+    -- 2. Construct user-ids from text
+    storeId <- validateUserId "Store"   
+    adaId <- validateUserId "Ada"
+    westDroneId <- validateUserId "WestDrone"
+    eastDroneId <- validateUserId "EastDrone"
+
+    -- 3. Create users with the given rights 
+    createUser (User storeId (Some store)) [CanActAs store]  
+    createUser (User adaId (Some customer)) [CanActAs customer]
+    createUser (User westDroneId (Some westDrone)) [CanActAs westDrone]
+    createUser (User eastDroneId (Some eastDrone)) [CanActAs eastDrone]
+
+    let customerDetails = CustomerDetails
+                        with
+                          name = "Ada Lovelace"
+                          address = "Rua Lisboa"
+                          paymentMethod = "Credit Card"
+
+    submitMulti [customer, store][] do
+        createCmd Order with
+            orderId = "12345" -- pseudo id
+            customer = customer
+            store = store
+            deliveryDrones = []
+            details = "1 large pizza"
+            customerDetails = customerDetails
+            value = 10.00
+            state = "new"  

@@ -1,5 +1,8 @@
 module Main where
 
+import DA.Optional
+import DA.Foldable
+
 data CustomerDetails = CustomerDetails with
     name: Text
     address: Text
@@ -47,19 +50,43 @@ template Order
     nonconsuming choice ProposeDelivery: ContractId Delivery
         with
           fee: Numeric 2
-          drone: Party
-        controller drone
+          deliveryDrone: Party
+        controller deliveryDrone
         do
+          assertMsg "Delivery proposal can not be made for this order" (state == "accepted")
+          assertMsg "Specified drone is not an eligible drone" (deliveryDrone `Prelude.elem` deliveryDrones)
           create Delivery
             with
               orderId = orderId
               customer = customer
               store = store
-              drone = drone
+              drone = deliveryDrone
               address = customerDetails.address
               fee = fee
               state = "proposed"
               pin = 0000
+
+    {-
+        This choice sets the state of the order to "pickupReady",
+      indicating that the order is ready for pickup by the delivery service.
+    -}
+    choice MarkAsPickupReady: (ContractId Order)
+        controller store
+        do
+          create this
+            with
+              state = "pickupReady"
+
+    {-
+        This choice sets the state of the order to "inDelivery",
+      indicating that the order is currently out for delivery to the customer.
+    -}
+    choice InitiateDelivery: (ContractId Order)
+        controller store
+        do
+          create this
+            with
+              state = "inDelivery"
 
     {-
       This choice serves for the store to mark the Order as completed
@@ -69,8 +96,6 @@ template Order
           deliveryDrone: Party
         controller store, deliveryDrone
         do
-          --delivery <- fetchByKey @Delivery (deliveryDrone, orderId)
-          --assertMsg "Can not complete order that have not been delivered" ((snd delivery).state == "completed")
            -- Look up the delivery associated with the order
           oDelivery <- lookupByKey @Delivery (deliveryDrone, orderId)
           -- Ensure that a delivery record is found
@@ -81,7 +106,7 @@ template Order
               -- Fetch the delivery contract
               delivery <- fetch deliveryId
               assertMsg "Can not complete an order that the delivery has not been completed" (delivery.state == "completed")
-              -- Cancel Order
+              -- Mark the Order as completed
               create this with state = "completed"
 
 
@@ -90,24 +115,16 @@ template Order
     -}
     choice CancelOrder: ContractId Order
         with
-          deliveryDrone: Party
-        controller store, deliveryDrone
+        controller store, deliveryDrones
         do
-        -- Look up the delivery associated with the order
-        oDelivery <- lookupByKey @Delivery (deliveryDrone, orderId)
-        -- Ensure that a delivery record is found
-        case oDelivery of
-          None -> 
-            -- Cancel Order
-            create this with state = "cancelled"
-          Some deliveryId -> do
-            -- Fetch the delivery contract
-            delivery <- fetch deliveryId
-            assertMsg "Cannot cancel the order: Delivery has already been picked up or is in progress" (delivery.state == "proposed" || delivery.state == "pickupReady")
-            -- Cancel Delivery
-            exercise deliveryId CancelDelivery
-            -- Cancel Order
-            create this with state = "cancelled"
+        -- Fetch all deliveries associated with the order
+        oDeliveries <- mapA (\drone -> lookupByKey @Delivery (drone, orderId)) deliveryDrones
+        -- Filter out non-existent deliveries
+        let validDeliveries = catOptionals oDeliveries
+        -- Cancel every delivery
+        mapA_ (`exercise` CancelDelivery) validDeliveries
+        -- Update state to "cancelled"
+        create this with state = "cancelled"
 
 {-
     This template represents the delivery information for an order. It stores
@@ -135,25 +152,31 @@ template Delivery
       This choice allows the Store to accept a delivery proposal,
     updating the delivery state to "pickupReady" & cancels the rest of the delivery proposals
     -}
-    choice AcceptProposal: ContractId Delivery
+    choice AcceptProposal: (ContractId Order, ContractId Delivery)
+        with
+          orderCid: ContractId Order 
         controller store
         do
           assertMsg "Deliveries must be in the 'proposed' state in order to be accepted" (state == "proposed")
-
-          create this with
-            state = "pickupReady"
+          orderC <- exercise orderCid MarkAsPickupReady
+          deliveryC <- create this with
+                          state = "approved"
+          return (orderC, deliveryC)
 
     {-
       This choice marks the delivery as picked up by the drone from the store,
     updating the state to "inProgress".
     -}
-    choice Pickup: ContractId Delivery
+    choice Pickup: (ContractId Order, ContractId Delivery)
         with
+          orderCid: ContractId Order 
         controller drone, store
         do
-          create this with
+          orderC <- exercise orderCid InitiateDelivery
+          deliveryC <- create this with
             pin = 1234 -- pseudo random pin
             state = "inProgress"
+          return (orderC, deliveryC)
 
     {-
       This choice confirms delivery by the drone and customer, 
@@ -162,12 +185,10 @@ template Delivery
     choice Handshake: ContractId Delivery
         with
           deliveryPin: Int
-          order: ContractId Order
         controller drone, customer
         do
-          
           assertMsg "Pin verification failed" (deliveryPin == pin)
-          assertMsg "Can not hanshake - delivery not in progress" (state == "inProgress")
+          assertMsg "Can not handshake - delivery not in progress" (state == "inProgress")
 
           create this with
             state = "completed"
@@ -177,10 +198,9 @@ template Delivery
     updating the delivery state to "cancelled"
     -}
     choice CancelDelivery: ContractId Delivery
-        with
-        controller drone
+        controller store
         do
-          -- Prevent the cancellation of deliveries in progress.
+          -- Prevent cancellation if the delivery is already in progress.
           assertMsg "Unable to cancel the delivery when it has been picked up." (state /= "inProgress")
           create this with
             state = "cancelled"

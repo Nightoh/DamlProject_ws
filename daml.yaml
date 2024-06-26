@@ -4,7 +4,7 @@
 sdk-version: 2.8.5
 name: droneDeliveryPlatform
 source: daml
-init-script: Main:setup
+init-script: Setup:setupUsers
 version: 0.0.1
 dependencies:
   - daml-prim
