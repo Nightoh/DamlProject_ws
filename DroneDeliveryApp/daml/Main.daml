@@ -1,0 +1,196 @@
+module Main where
+
+data CustomerDetails = CustomerDetails with
+    name: Text
+    address: Text
+    paymentMethod: Text
+      deriving (Eq, Ord, Show)
+
+{-
+  This template represents an order placed by the customer to the store.
+-}
+template Order
+  with
+    orderId: Text
+    customer: Party
+    store: Party
+    deliveryDrones: [Party]
+    customerDetails: CustomerDetails
+    details: Text
+    state: Text
+    value: Numeric 2
+  where
+    signatory customer, store
+    observer deliveryDrones
+
+    {-
+      This choice allows the store to accept a customer order,
+    specifying the order volume, weight, and eligible drones for delivery,
+    and updating the order state to "accepted".
+    -}
+    choice AcceptOrder: (ContractId Order)
+        with
+          volume: Numeric 2
+          weight: Numeric 2
+          drones: [Party] -- Eligible delivery drones
+        controller store
+        do
+          create this
+            with
+              deliveryDrones = drones
+              state = "accepted"
+
+    {-
+      This non-consuming choice allows the drone to propose a new delivery,
+    specifying the delivery fee and updating the delivery state to "proposed".
+    -}
+    nonconsuming choice ProposeDelivery: ContractId Delivery
+        with
+          fee: Numeric 2
+          drone: Party
+        controller drone
+        do
+          create Delivery
+            with
+              orderId = orderId
+              customer = customer
+              store = store
+              drone = drone
+              address = customerDetails.address
+              fee = fee
+              state = "proposed"
+              pin = 0000
+
+    {-
+      This choice serves for the store to mark the Order as completed
+    -}
+    choice CompleteOrder: ContractId Order
+        with
+          deliveryDrone: Party
+        controller store, deliveryDrone
+        do
+          --delivery <- fetchByKey @Delivery (deliveryDrone, orderId)
+          --assertMsg "Can not complete order that have not been delivered" ((snd delivery).state == "completed")
+           -- Look up the delivery associated with the order
+          oDelivery <- lookupByKey @Delivery (deliveryDrone, orderId)
+          -- Ensure that a delivery record is found
+          case oDelivery of
+            None -> 
+              abort "Can not complete Order without a delivery"
+            Some deliveryId -> do
+              -- Fetch the delivery contract
+              delivery <- fetch deliveryId
+              assertMsg "Can not complete an order that the delivery has not been completed" (delivery.state == "completed")
+              -- Cancel Order
+              create this with state = "completed"
+
+
+    {-
+      This choice allows the store to cancel an order.
+    -}
+    choice CancelOrder: ContractId Order
+        with
+          deliveryDrone: Party
+        controller store, deliveryDrone
+        do
+        -- Look up the delivery associated with the order
+        oDelivery <- lookupByKey @Delivery (deliveryDrone, orderId)
+        -- Ensure that a delivery record is found
+        case oDelivery of
+          None -> 
+            -- Cancel Order
+            create this with state = "cancelled"
+          Some deliveryId -> do
+            -- Fetch the delivery contract
+            delivery <- fetch deliveryId
+            assertMsg "Cannot cancel the order: Delivery has already been picked up or is in progress" (delivery.state == "proposed" || delivery.state == "pickupReady")
+            -- Cancel Delivery
+            exercise deliveryId CancelDelivery
+            -- Cancel Order
+            create this with state = "cancelled"
+
+{-
+    This template represents the delivery information for an order. It stores
+  essential details related to the delivery process, including the involved
+  parties, delivery address, delivery state, fee, and security pin.
+-}
+template Delivery
+  with
+    orderId: Text
+    store: Party
+    drone: Party
+    customer: Party
+    address: Text
+    state: Text
+    fee: Numeric 2
+    pin: Int
+  where
+    signatory drone
+    observer store, customer
+
+    key(drone, orderId): (Party, Text)
+    maintainer key._1
+
+    {-
+      This choice allows the Store to accept a delivery proposal,
+    updating the delivery state to "pickupReady" & cancels the rest of the delivery proposals
+    -}
+    choice AcceptProposal: ContractId Delivery
+        controller store
+        do
+          assertMsg "Deliveries must be in the 'proposed' state in order to be accepted" (state == "proposed")
+
+          create this with
+            state = "pickupReady"
+
+    {-
+      This choice marks the delivery as picked up by the drone from the store,
+    updating the state to "inProgress".
+    -}
+    choice Pickup: ContractId Delivery
+        with
+        controller drone, store
+        do
+          create this with
+            pin = 1234 -- pseudo random pin
+            state = "inProgress"
+
+    {-
+      This choice confirms delivery by the drone and customer, 
+    updating the delivery state to "delivered" given that the pin provided is correct
+    -}
+    choice Handshake: ContractId Delivery
+        with
+          deliveryPin: Int
+          order: ContractId Order
+        controller drone, customer
+        do
+          
+          assertMsg "Pin verification failed" (deliveryPin == pin)
+          assertMsg "Can not hanshake - delivery not in progress" (state == "inProgress")
+
+          create this with
+            state = "completed"
+
+    {-
+      This choice allows the store to cancel an ongoing delivery,
+    updating the delivery state to "cancelled"
+    -}
+    choice CancelDelivery: ContractId Delivery
+        with
+        controller drone
+        do
+          -- Prevent the cancellation of deliveries in progress.
+          assertMsg "Unable to cancel the delivery when it has been picked up." (state /= "inProgress")
+          create this with
+            state = "cancelled"
+
+    {-
+      This choice allows the store to reject the delivery proposal.
+    -}
+    choice RejectProposal: ContractId Delivery
+        controller store
+        do
+          assertMsg "Only proposed deliveries can be rejected" (state == "proposed")
+          create this with state = "rejected"
+

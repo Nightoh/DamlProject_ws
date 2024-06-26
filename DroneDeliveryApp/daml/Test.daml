@@ -1,0 +1,354 @@
+module Test where
+
+import Daml.Script
+import Main
+import DA.Optional
+import DA.Foldable
+
+
+-- Parties structure for testing
+data TestParties = TestParties with
+  customerOne: Party
+  customerTwo: Party
+  storeOne: Party
+  storeTwo: Party
+  westDroneOne: Party
+  westDroneTwo: Party
+  eastDroneOne: Party
+  westDrones: [Party]
+  eastDrones: [Party]
+
+-- Create parties for testing
+setupParties: Script TestParties
+setupParties = script do
+  ada <- allocateParty "Ada"
+  jack <- allocateParty "Jack"
+  burgerHouse <- allocateParty "BurgerHouse"
+  pizzaHouse <- allocateParty "PizzaHouse"
+  westOne <- allocateParty "WestDroneOne"
+  westTwo <- allocateParty "WestDroneTwo"
+  eastOne <- allocateParty "eastDroneOne"
+  return TestParties with
+    customerOne = ada
+    customerTwo = jack
+    storeOne = burgerHouse
+    storeTwo = pizzaHouse
+    westDrones = [westOne, westTwo]
+    eastDrones = [eastOne]
+    westDroneOne = westOne
+    westDroneTwo = westTwo
+    eastDroneOne = eastOne
+
+-- Create first Order contract
+setupAcceptedOrder: Party -> Party-> [Party] -> Script (ContractId Order)
+setupAcceptedOrder c s d = script do
+  let customerDetails = CustomerDetails
+                        with
+                          name = "Ada Lovelace"
+                          address = "Rua Lisboa"
+                          paymentMethod = "Credit Card"
+  orderCid <- submitMulti [c, s][] do
+    createCmd Order with
+        orderId = "12345" -- pseudo id
+        customer = c
+        store = s
+        deliveryDrones = []
+        details = "1 large pizza"
+        customerDetails = customerDetails
+        value = 10.00
+        state = "new"
+  {-
+    StoreOne accepts the order and designates westDrones as the eligible
+  drones for delivery. The order details include the volume and weight
+  of the package.
+  -}
+  submitMulti [s, c][] do
+    exerciseCmd orderCid AcceptOrder
+      with
+        drones = d
+        volume = 2.00
+        weight = 1.00
+
+
+
+
+{-
+
+  HappyPath 1
+  
+  This script tests the full lifecycle of an order: from creation to acceptance,
+pickup, delivery, and finally, completion. It ensures that all steps are executed
+correctly and in sequence.
+-}
+orderDelivery : Script ()
+orderDelivery = do
+
+  -- Set up the test parties involved in the scenario
+  testParties@TestParties{..} <- setupParties
+
+  -- Customer places an order with storeOne
+  orderCid <- setupAcceptedOrder customerOne storeOne westDrones
+
+  orderCid <- submit storeOne do
+    exerciseCmd orderCid AcceptOrder
+      with
+        drones = westDrones ++ eastDrones
+        volume = 2.00
+        weight = 1.00
+
+  {-
+    The first west drone proposes a delivery for the order. This proposal
+  includes a delivery fee and specifies the proposing drone.
+  -}
+  deliveryProposalCid <- submit westDroneOne do
+    exerciseCmd orderCid ProposeDelivery
+      with
+        fee = 10.00
+        drone = westDroneOne
+
+
+  submit eastDroneOne do
+    exerciseCmd orderCid ProposeDelivery
+      with
+        fee = 5.00
+        drone = eastDroneOne
+
+  {-
+    StoreOne accepts the delivery proposal from the west drone. This step
+  confirms that the store agrees to the delivery terms and selects the
+  drones for delivery.
+  -}
+  acceptedDelivery <- submit storeOne do
+    exerciseCmd deliveryProposalCid AcceptProposal
+
+  {-
+    The designated drone (westDroneOne) picks up the payload from StoreOne.
+  This step involves both the store and the drone to confirm the pickup.
+  -}
+  pickedDelivery <- submitMulti [storeOne, westDroneOne][] do
+    exerciseCmd acceptedDelivery Pickup
+
+  {-
+    The drone (westDroneOne) delivers the package to the customer. This
+  step involves a handshake, where the customer provides a delivery pin
+  to confirm receipt of the package.
+  -}
+  submitMulti [customerOne, westDroneOne][] do
+    exerciseCmd pickedDelivery Handshake
+      with
+        deliveryPin = 1234
+        order = orderCid
+
+  -- StoreOne completes the order after the successful delivery.
+  submitMulti [storeOne, westDroneOne][] do
+    exerciseCmd orderCid CompleteOrder
+      with
+        deliveryDrone = westDroneOne
+
+
+  return ()
+
+
+
+
+{-
+
+  HappyPath 2
+  
+  This script tests the scenario were the store cancel the order and drones the deliveries
+-}
+orderCancellation : Script ()
+orderCancellation = do
+
+  -- Set up the test parties involved in the scenario
+  testParties@TestParties{..} <- setupParties
+
+  -- Customer places an order with storeOne
+  orderCid <- setupAcceptedOrder customerOne storeOne westDrones
+
+  {-
+    The first west drone proposes a delivery for the order. This proposal
+  includes a delivery fee and specifies the proposing drone.
+  -}
+  deliveryProposalCid <- submit westDroneOne do
+    exerciseCmd orderCid ProposeDelivery
+      with
+        fee = 10.00
+        drone = westDroneOne
+
+  {-
+    StoreOne accepts the delivery proposal from the west drone. This step
+  confirms that the store agrees to the delivery terms and selects the
+  drones for delivery.
+  -}
+  acceptedDelivery <- submit storeOne do
+    exerciseCmd deliveryProposalCid AcceptProposal
+
+  {-
+    The store and drone cancel the order.
+  -}
+  submitMulti [westDroneOne, storeOne][] do
+    exerciseCmd orderCid CancelOrder with
+      deliveryDrone = westDroneOne
+
+  return ()
+
+
+
+
+{-
+
+  HappyPath 3
+  
+  This script tests the scenario were the store is not happy with some proposals and rejects some
+-}
+rejectDeliveries : Script ()
+rejectDeliveries = do
+
+  -- Set up the test parties involved in the scenario
+  testParties@TestParties{..} <- setupParties
+
+  -- Customer places an order with storeOne
+  orderCid <- setupAcceptedOrder customerOne storeOne westDrones
+
+  {-
+    The first west drone proposes a delivery for the order. This proposal
+  includes a delivery fee and specifies the proposing drone.
+  -}
+  deliveryProposalOne <- submit westDroneOne do
+    exerciseCmd orderCid ProposeDelivery
+      with
+        fee = 10.00
+        drone = westDroneOne
+    
+  {-
+    The second west drone proposes a delivery for the order. This proposal
+  includes a delivery fee and specifies the proposing drone.
+  -}
+  deliveryProposalTwo <- submit westDroneTwo do
+    exerciseCmd orderCid ProposeDelivery
+      with
+        fee = 8.00
+        drone = westDroneTwo
+
+  -- Retrieve order payload
+  Some order <- queryContractId storeOne orderCid
+  -- Get Order deliveries
+  deliveries <- mapA (\drone -> (queryContractKey @Delivery storeOne (drone, order.orderId))) westDrones
+  -- Remove Nones
+  let validDeliveries = catOptionals deliveries
+  -- Reject order deliveries
+  mapA_ (\delivery -> submit storeOne do exerciseCmd (fst delivery) RejectProposal) validDeliveries
+
+
+
+
+{-
+
+  Unhappy path 1
+  
+  This script tests the scenario where a drone that is not eligible for an order 
+attempts to propose a delivery. It verifies that only authorized 
+drones can propose deliveries for accepted orders.
+-}
+wrongDrones : Script ()
+wrongDrones = script do
+
+  -- Set up the test parties involved in the scenario
+  testParties@TestParties{..} <- setupParties
+
+  -- Customer places an order with storeOne
+  orderCid <- setupAcceptedOrder customerOne storeOne westDrones
+
+  {-
+    East drones can not make a delivery proposal since it was not included in the group of drones
+  eligible for delivery.
+  -}
+  submitMustFail eastDroneOne do
+    exerciseCmd orderCid ProposeDelivery
+      with
+        fee = 8.00
+        drone = eastDroneOne
+
+  return ()
+
+
+
+
+{-
+
+  Unhappy path 2
+  
+  This script tests the scenario where a store attempts to accept orders 
+that belong to a different store.
+-}
+wrongOrder : Script ()
+wrongOrder = script do
+
+  testParties@TestParties{..} <- setupParties
+
+  -- Customer places order
+  orderCid <- setupAcceptedOrder customerOne storeOne westDrones
+  
+  -- Store two attempts to accept order for store one
+  submitMultiMustFail [storeTwo, customerOne][] do
+    exerciseCmd orderCid AcceptOrder
+      with
+        drones = westDrones
+        volume = 2.00
+        weight = 1.00
+
+  return ()
+
+
+
+
+{-
+
+  Unhappy path 3
+
+  This script tests the scenario where a store attempts to cancel an Order 
+with a delivery that is already in progress
+-}
+unableToCancel : Script ()
+unableToCancel = script do
+
+  testParties@TestParties{..} <- setupParties
+
+  -- Customer places order
+  orderCid <- setupAcceptedOrder customerOne storeOne westDrones
+
+  {-
+    The first west drone proposes a delivery for the order. This proposal
+  includes a delivery fee and specifies the proposing drone.
+  -}
+  deliveryProposalCid <- submit westDroneOne do
+    exerciseCmd orderCid ProposeDelivery
+      with
+        fee = 10.00
+        drone = westDroneOne
+
+  {-
+    StoreOne accepts the delivery proposal from the west drone. This step
+  confirms that the store agrees to the delivery terms and selects the
+  drones for delivery.
+  -}
+  acceptedDelivery <- submit storeOne do
+    exerciseCmd deliveryProposalCid AcceptProposal
+
+  {-
+    The designated drone (westDroneOne) picks up the payload from StoreOne.
+  This step involves both the store and the drone to confirm the pickup.
+  -}
+  submitMulti [storeOne, westDroneOne][] do
+    exerciseCmd acceptedDelivery Pickup
+
+  {-
+    The first west drone proposes a delivery for the order. This proposal
+  includes a delivery fee and specifies the proposing drone.
+  -}
+  deliveryProposalCid <- submitMultiMustFail [storeOne, westDroneOne][] do
+    exerciseCmd orderCid CancelOrder with
+      deliveryDrone = westDroneOne
+
+  return ()
