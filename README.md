@@ -39,24 +39,19 @@ If the proposal is accepted, the state of the order is updated, and the delivery
 
   Controller: Finally, the store completes the delivery by exercising the CompleteOrder choice, marking the order as "completed".
 
-### III. Challenge(s)
-
-* The project was created by using `empty-skeleton` and the following was removed from `daml.yaml`
-
-
-### IV. Building
+### III. Building
 To compile the project
 ```
 $ daml build
 ```
 
-### V. Testing
+### IV. Testing
 To test all test scripts run:
 ```
 $ daml test
 ```
 
-### VI. Running
+### V. Running
 To load the project into the sandbox and start navigator:
 ```
 $ daml start
