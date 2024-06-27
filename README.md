@@ -1,4 +1,4 @@
-# DaX Platform
+# ⚡ DaX Platform ⚡
 
 **DaX** is a platform that uses drones to deliver store orders directly to customers quickly and efficiently.
 
@@ -6,7 +6,7 @@
 
 
 ### I. Overview 
-This project was created using the empty-skeleton template and exemplifies the proposal-accept design pattern. The workflow involves multiple parties, each with distinct roles and responsibilities, to manage an order from creation to delivery.
+This project was created using the empty-skeleton template and exemplifies the proposal-accept design pattern. The workflow involves multiple parties (Stores, customers and drones), each with distinct roles and responsibilities, to manage an order from creation to delivery.
 
 ### II. Workflow
 
