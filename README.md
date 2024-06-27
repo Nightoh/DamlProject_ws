@@ -12,32 +12,34 @@ This project was created using the empty-skeleton template and exemplifies the p
 
 **1. Order Creation:**
 
-  Signatory: A signatory (typically a customer) initiates the process by creating an Order contract.
+  The customer initiates the process by creating an Order contract.
 
 **2. Order Acceptance:**
 
-  Controller: The store, as a controller, can exercise the AcceptOrder choice to prepare the order for receiving delivery proposals. At this point, the order is marked as "accepted".
+  The store, as a controller, can exercise the AcceptOrder choice to prepare the order for receiving delivery proposals. At this point, the order is marked as "accepted".
 
 **3. Delivery Proposals:**
 
-  Controller: A drone, acting as a controller, can propose a delivery by exercising the ProposeDelivery choice on the order contract. This involves specifying the delivery fee and the proposing drone.
+  The drone, acting as a controller, can propose a delivery by exercising the ProposeDelivery choice on the order contract. This involves specifying the delivery fee and the proposing drone.
 
 **4. Proposal Decision:**
 
-  Controller: The store then has the option to either accept or reject the delivery proposal. This is done by exercising the AcceptProposal or RejectProposal choice.
-If the proposal is accepted, the state of the order is updated, and the delivery process can proceed.
+  The store then has the option to either accept or reject the delivery proposal. This is done by exercising the AcceptProposal or RejectProposal choice.
+If the proposal is accepted, the state of the order is updated to "pickupReady", and the delivery process can proceed (the Delivery contract is updated with the state "approved").
 
 **5. Order Pickup:**
 
-  Controller: Once a proposal is accepted, the store and the drone collaboratively exercise the Pickup choice. This step confirms that the drone has picked up the order from the store.
+  Once the delivery is approved, the store and the drone collaboratively exercise the Pickup choice. This step confirms that the drone has picked up the order from the store, updating the order state to "inDelivery" and the delivery state to "inProgress".
 
 **6. Order Delivery:**
 
-  Controller: The drone completes the delivery by performing a handshake with the customer, which involves the customer providing a delivery pin to confirm receipt. This is done by exercising the Handshake choice.
+  The drone completes the delivery by performing a handshake with the customer, which involves the customer providing a delivery pin to confirm receipt. This is done by exercising the Handshake choice.
+  When completed with success the state of the delivery is updated to "completed"
 
 **7. Order Completion:**
 
-  Controller: Finally, the store completes the delivery by exercising the CompleteOrder choice, marking the order as "completed".
+  Finally, the store can complete the order by exercising the CompleteOrder choice, which marks the order as "completed".
+  This choice can only be exercised if the delivery status is marked as "completed".
 
 ### III. Building
 To compile the project
