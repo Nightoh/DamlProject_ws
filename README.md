@@ -41,6 +41,8 @@ If the proposal is accepted, the state of the order is updated, and the delivery
 
 ### III. Challenge(s)
 
+* The project was created by using `empty-skeleton` and the following was removed from `daml.yaml`
+
 
 ### IV. Building
 To compile the project
